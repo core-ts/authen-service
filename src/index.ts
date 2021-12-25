@@ -1,4 +1,4 @@
-import { AuthInfo, AuthResult, CustomJwtToken, DB, Module, Privilege, RepoConfig, SqlConfig, Statement, Status, StatusConf, StringMap, Token, UserAccount, UserInfo, UserRepository, UserStatus } from './auth';
+import { AuthInfo, AuthResult, CustomJwtToken, DB, Module, Privilege, SqlAuthConfig, SqlConfig, Statement, Status, StatusConf, StringMap, Token, UserAccount, UserInfo, UserRepository, UserStatus } from './auth';
 
 export * from './auth';
 export type TokenConf = Token;
@@ -9,7 +9,7 @@ export type User = AuthInfo;
 export type Result = AuthResult;
 export type Account = UserAccount;
 export type UserService = UserRepository;
-export type Config = RepoConfig;
+export type Config = SqlAuthConfig;
 
 export function useAuthenticator<T extends AuthInfo>(status: Status,
   check: (user: T) => Promise<AuthResult>,

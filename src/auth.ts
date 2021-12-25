@@ -178,9 +178,10 @@ export interface SqlConfig extends BaseConfig {
     pass2?: string;
   };
 }
-export interface AuthConfig extends BaseConfig {
+export interface SqlAuthConfig extends BaseConfig {
+  token: Token;
   status?: StatusConf;
-}
-export interface RepoConfig extends SqlConfig {
-  status?: StatusConf;
+  payload: StringMap;
+  account?: StringMap;
+  repo: SqlConfig;
 }
