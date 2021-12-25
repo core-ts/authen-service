@@ -300,7 +300,7 @@ export function equalDate(date1?: Date, date2?: Date): boolean {
   }
   return false;
 }
-export class PrivilegeRepository {
+export class PrivilegesLoader {
   constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string, public count?: number) {
     this.privileges = this.privileges.bind(this);
   }
@@ -311,11 +311,19 @@ export class PrivilegeRepository {
         p.push(userId);
       }
     }
-    return this.query<Module>(this.sql, [userId]).then(v => toPrivileges(v));
+    return this.query<Module>(this.sql, [userId]).then(v => {
+      if (v && v.length >= 2) {
+        if (v[0].permissions !== undefined) {
+          return toPrivileges(orPermissions(v));
+        }
+      }
+      return toPrivileges(v);
+    });
   }
 }
-export const PrivilegeService = PrivilegeRepository;
-export class PrivilegesLoader {
+export const PrivilegeService = PrivilegesLoader;
+export const PrivilegeRepository = PrivilegesLoader;
+export class PrivilegesReader {
   constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string) {
     this.privileges = this.privileges.bind(this);
   }
@@ -328,7 +336,7 @@ export function toPrivileges(m: Module[]): Privilege[] {
   for (const p of ps) {
     getChildren(p, m);
   }
-  return ps;
+  return ps.sort(subPrivilege);
 }
 export function getRoot(ms: Module[]): Module[] {
   const ps: Module[] = [];
@@ -354,8 +362,54 @@ export function getChildren(m: Module, all: Module[]) {
     m.children = children;
   }
 }
+export function orPermissions(all: Module[]): Module[] {
+  if (all.length <= 1) {
+    return all;
+  }
+  const modules = all.sort(subPrivilegeId);
+  const ms: Module[] = [];
+  const l = all.length;
+  const l1 = l - 1;
+  for (let i = 0; i < l1;) {
+    for (let j = i + 1; j < l; j++) {
+      if (modules[i].id === modules[j].id) {
+        // tslint:disable-next-line:no-bitwise
+        modules[i].permissions = modules[i].permissions | modules[j].permissions;
+        if (j === l1) {
+          ms.push(modules[i]);
+          i = l1 + 3;
+          break;
+        }
+      } else {
+        ms.push(modules[i]);
+        i = j;
+      }
+    }
+  }
+  if (l >= 2) {
+    if (modules[l1].id !== modules[l1 - 1].id) {
+      ms.push(modules[l1]);
+    }
+  }
+  return ms;
+}
+export function subPrivilegeId(p1: Privilege, p2: Privilege): number {
+  return subString(p1.id, p2.id);
+}
 export function subPrivilege(p1: Privilege, p2: Privilege): number {
   return sub(p1.sequence, p2.sequence);
+}
+export function subString(n1?: string, n2?: string): number {
+  if (!n1 && !n2) {
+    return 0;
+  } else if (n1 && n2) {
+    return n1.localeCompare(n2);
+  } else if (n1) {
+    return 1;
+  } else if (n2) {
+    return -1;
+  }
+  return 0;
 }
 export function sub(n1?: number, n2?: number): number {
   if (!n1 && !n2) {
@@ -385,6 +439,7 @@ export function map<T, R>(obj: T, m: StringMap): R {
   }
   return obj2;
 }
+export const deletedFields = ['password', 'disable', 'deactivated', 'suspended', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo'];
 export function mapAll<T, R>(obj: T, m?: StringMap): R {
   if (!m) {
     return obj as any;
@@ -401,6 +456,9 @@ export function mapAll<T, R>(obj: T, m?: StringMap): R {
       k0 = key;
     }
     obj2[k0] = (obj as any)[key];
+  }
+  for (const f of deletedFields) {
+    delete obj2[f];
   }
   return obj2;
 }
@@ -422,6 +480,27 @@ export function initializeStatus(s?: StatusConf): Status {
 export function useUserRepository(db: DB, c: SqlConfig): SqlUserRepository {
   return new SqlUserRepository(db, c.sql.query, c.sql.fail, c.sql.pass, c.sql.pass2, c.status, c.statusName, c.maxPasswordAge, c.time);
 }
+export function getUser(obj: UserInfo, status?: string, s?: UserStatus, maxPasswordAge?: number): UserInfo {
+  if (status && status.length > 0) {
+    const t = (obj as any)[status];
+    if (t !== undefined && t != null && s) {
+      if (s.deactivated !== undefined && t === s.deactivated) {
+        obj.deactivated = true;
+      }
+      if (s.suspended !== undefined && t === s.suspended) {
+        obj.suspended = true;
+      }
+      if (s.disable !== undefined && t === s.disable) {
+        obj.disable = true;
+      }
+    }
+    delete (obj as any)[status];
+  }
+  if (maxPasswordAge !== undefined && maxPasswordAge > 0 && (!obj.maxPasswordAge || obj.maxPasswordAge < 0)) {
+    obj.maxPasswordAge = maxPasswordAge;
+  }
+  return obj;
+}
 export const createUserRepository = useUserRepository;
 export const createUserService = useUserRepository;
 export const useUserService = useUserRepository;
@@ -431,32 +510,7 @@ export class SqlUserRepository implements UserRepository {
     this.time = (time !== undefined ? true : false);
   }
   getUser(username: string): Promise<UserInfo | null | undefined> {
-    return this.db.query<UserInfo>(this.query, [username]).then(v => {
-      if (!v || v.length <= 0) {
-        return undefined;
-      } else {
-        const obj = v[0];
-        if (this.statusName && this.statusName.length > 0) {
-          const s = (obj as any)[this.statusName];
-          if (s !== undefined && s != null && this.status) {
-            if (this.status.deactivated !== undefined && s === this.status.deactivated) {
-              obj.deactivated = true;
-            }
-            if (this.status.suspended !== undefined && s === this.status.suspended) {
-              obj.suspended = true;
-            }
-            if (this.status.disable !== undefined && s === this.status.disable) {
-              obj.disable = true;
-            }
-          }
-          delete (obj as any)[this.statusName];
-        }
-        if (this.maxPasswordAge !== undefined && this.maxPasswordAge > 0 && (!obj.maxPasswordAge || obj.maxPasswordAge < 0)) {
-          obj.maxPasswordAge = this.maxPasswordAge;
-        }
-        return obj;
-      }
-    });
+    return this.db.query<UserInfo>(this.query, [username]).then(v => !v || v.length <= 0 ? undefined : getUser(v[0], this.statusName, this.status, this.maxPasswordAge));
   }
   fail(userId: string): Promise<boolean> {
     if (!this.sqlFail || this.sqlFail.length === 0) {

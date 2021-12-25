@@ -37,7 +37,8 @@ export interface UserInfo {
 
   language?: string;
   dateFormat?: string;
-  imageUrl?: string;
+  timeFormat?: string;
+  imageURL?: string;
 }
 export interface UserStatus {
   activated?: number | string;
@@ -120,6 +121,7 @@ export interface Privilege {
   icon?: string;
   sequence?: number;
   children?: Privilege[];
+  permissions?: number;
 }
 export interface Module {
   id?: string;
@@ -130,6 +132,7 @@ export interface Module {
   sequence?: number;
   parent?: string;
   children?: Privilege[];
+  permissions: number;
 }
 /*
 export interface StoredUser {
