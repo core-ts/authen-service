@@ -1,4 +1,4 @@
-import { AuthInfo, AuthResult, CustomJwtToken, DB, Module, Privilege, SqlAuthConfig, SqlConfig, Statement, Status, StatusConf, StringMap, Token, UserAccount, UserInfo, UserRepository, UserStatus } from './auth';
+import { AuthInfo, AuthResult, CustomJwtToken, DB, Module, Privilege, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, UserAccount, UserInfo, UserRepository, UserStatus } from './auth';
 
 export * from './auth';
 export type TokenConf = Token;
@@ -14,32 +14,49 @@ export type Config = SqlAuthConfig;
 export function useAuthenticator<T extends AuthInfo>(status: Status,
   check: (user: T) => Promise<AuthResult>,
   generateToken: (payload: any, secret: string, expiresIn: number) => Promise<string | undefined>,
-  getPrivileges: (username: string) => Promise<Privilege[]>,
   token: Token,
   payload: StringMap,
-  account?: StringMap, repository?: UserRepository,
+  account?: StringMap,
+  repository?: UserRepository,
+  getPrivileges?: (username: string) => Promise<Privilege[]>,
   lockedMinutes?: number,
   maxPasswordFailed?: number,
   compare?: (v1: string, v2: string) => Promise<boolean>): Authenticator<T> {
-  return new Authenticator<T>(status, generateToken, getPrivileges, token, payload, account, repository, compare, lockedMinutes, maxPasswordFailed, check);
+  return new Authenticator<T>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, check);
 }
 export const createAuthenticator = useAuthenticator;
+export function swap(m?: StringMap): StringMap|undefined {
+  if (!m) {
+    return m;
+  }
+  const keys = Object.keys(m);
+  const values = Object.values(m);
+  const l = keys.length;
+  const obj: StringMap = {};
+  for (let i = 0; i < l; i++) {
+    obj[values[i]] = keys[i];
+  }
+  return obj;
+}
 export class Authenticator<T extends AuthInfo> {
   constructor(public status: Status,
+    public compare: ((v1: string, v2: string) => Promise<boolean>)|undefined,
     public generateToken: <P>(payload: P, secret: string, expiresIn: number) => Promise<string | undefined>,
-    public getPrivileges: (userId: string) => Promise<Privilege[]>,
     public token: Token,
     public payload: StringMap,
-    public account?: StringMap,
+    account?: StringMap,
     public repository?: UserRepository,
-    public compare?: (v1: string, v2: string) => Promise<boolean>,
+    public getPrivileges?: (userId: string) => Promise<Privilege[]>,
     public lockedMinutes?: number,
     public maxPasswordFailed?: number,
     public check?: (user: T) => Promise<AuthResult>) {
+    this.account = swap(account);
     this.authenticate = this.authenticate.bind(this);
   }
+  account?: StringMap;
   async authenticate(info: T): Promise<AuthResult> {
-    let result: AuthResult = { status: this.status.fail };
+    const s = this.status;
+    let result: AuthResult = { status: s.fail };
     const username = info.username;
     const password = info.password;
     if (!username || username === '' || !password || password === '') {
@@ -47,7 +64,7 @@ export class Authenticator<T extends AuthInfo> {
     }
     if (this.check) {
       result = await this.check(info);
-      if (!result || result.status !== this.status.success && result.status !== this.status.success_and_reactivated) {
+      if (!result || result.status !== s.success && result.status !== s.success_and_reactivated) {
         return result;
       }
       if (!this.repository) {
@@ -57,7 +74,7 @@ export class Authenticator<T extends AuthInfo> {
         const account0: UserAccount = {};
         account0.token = token0;
         account0.tokenExpiredTime = tokenExpiredTime0;
-        result.status = this.status.success;
+        result.status = s.success;
         result.user = account0;
         return result;
       }
@@ -67,40 +84,54 @@ export class Authenticator<T extends AuthInfo> {
     }
     const user = await this.repository.getUser(info.username);
     if (!user) {
-      result.status = this.status.fail;
+      result.status = s.fail;
       // result.message = 'UserNotExisted';
       return result;
     }
     if (!this.check && this.compare) {
       const valid = await this.compare(password, user.password ? user.password : '');
       if (!valid) {
-        result.status = this.status.wrong_password;
+        result.status = s.wrong_password;
         if (this.repository.fail) {
-          const isUpdateStatus = await this.repository.fail(user.id, user.failCount);
-          if (!isUpdateStatus) {
-            result.status = this.status.fail;
+          const tnow = new Date();
+          if (user.lockedUntilTime) {
+            if (before(user.lockedUntilTime, tnow)) {
+              await this.repository.fail(user.id, 0, null);
+              return result;
+            }
+          } else {
+            let lockedUntilTime: Date|undefined;
+            if (this.lockedMinutes && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
+              lockedUntilTime = addMinutes(tnow, this.lockedMinutes);
+            }
+            await this.repository.fail(user.id, user.failCount, lockedUntilTime);
             return result;
           }
         } else {
           return result;
         }
       }
-      const account1: UserAccount = {};
-      result.user = account1;
     }
     if (user.disable) {
-      result.status = this.status.disabled;
+      result.status = s.disabled;
       return result;
     }
     if (user.suspended) {
-      result.status = this.status.suspended;
+      result.status = s.suspended;
       return result;
     }
-    if (user.failTime && user.failTime instanceof Date && this.lockedMinutes !== undefined && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
+    if (user.lockedUntilTime) {
+      const lockedUntilTime = user.lockedUntilTime;
+      const locked = (lockedUntilTime && (subTime(now(), lockedUntilTime) < 0));
+      if (locked) {
+        result.status = s.locked;
+        return result;
+      }
+    } else if (user.failTime && user.failTime instanceof Date && this.lockedMinutes !== undefined && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
       const lockedUntilTime = addMinutes(user.failTime, this.lockedMinutes);
       const locked = (lockedUntilTime && (subTime(now(), lockedUntilTime) < 0));
       if (locked) {
-        result.status = this.status.locked;
+        result.status = s.locked;
         return result;
       }
     }
@@ -110,24 +141,24 @@ export class Authenticator<T extends AuthInfo> {
       passwordExpiredTime = addDays(user.passwordModifiedTime, user.maxPasswordAge);
     }
     if (passwordExpiredTime && subTime(now(), passwordExpiredTime) > 0) {
-      result.status = this.status.password_expired;
+      result.status = s.password_expired;
       return result;
     }
     if (!isValidAccessDate(user.accessDateFrom, user.accessDateTo)) {
-      result.status = this.status.disabled;
+      result.status = s.disabled;
       return result;
     }
     if (!isValidAccessTime(user.accessTimeFrom, user.accessTimeTo)) {
-      result.status = this.status.access_time_locked;
+      result.status = s.access_time_locked;
       return result;
     }
     const { tokenExpiredTime, jwtTokenExpires } = setTokenExpiredTime(user, this.token.expires);
     const payload = map(user, this.payload);
     const token = await this.generateToken(payload, this.token.secret, jwtTokenExpires);
     if (user.deactivated) {
-      result.status = this.status.success_and_reactivated;
+      result.status = s.success_and_reactivated;
     } else {
-      result.status = this.status.success;
+      result.status = s.success;
     }
     const account = mapAll<UserInfo, UserAccount>(user, this.account);
     account.token = token;
@@ -140,8 +171,8 @@ export class Authenticator<T extends AuthInfo> {
     result.user = account;
     if (this.repository.pass) {
       return this.repository.pass(user.id, user.deactivated).then(isStatus => {
-        if (isStatus === false) {
-          result.status = this.status.fail;
+        if (!isStatus) {
+          result.status = s.fail;
         }
         return result;
       });
@@ -196,16 +227,16 @@ export function isValidAccessDate(fromDate?: Date, toDate?: Date): boolean {
   const today = now();
   if (fromDate && toDate) {
     const toDateNew = addHours(toDate, 24);
-    if (before(fromDate, today) === true || equalDate(fromDate, today) === true && after(toDateNew, toDate) === true) {
+    if (before(fromDate, today) || equalDate(fromDate, today) && before(toDate, toDateNew)) {
       return true;
     }
   } else if (toDate) {
     const toDateNew = addHours(toDate, 24);
-    if (after(toDateNew, today) === true) {
+    if (before(today, toDateNew)) {
       return true;
     }
   } else if (fromDate) {
-    if (before(fromDate, today) === true || equalDate(fromDate, today) === true) {
+    if (before(fromDate, today) || equalDate(fromDate, today)) {
       return true;
     }
   } else {
@@ -219,11 +250,11 @@ export function isValidAccessTime(fromTime?: Date, toTime?: Date): boolean {
     if (before(toTime, fromTime) || equalDate(toTime, fromTime)) {
       toTime = addHours(toTime, 24);
     }
-    if (before(fromTime, today) || equalDate(fromTime, today) && after(toTime, today) || equalDate(toTime, today)) {
+    if (before(fromTime, today) || equalDate(fromTime, today) && before(today, toTime) || equalDate(toTime, today)) {
       return true;
     }
   } else if (toTime) {
-    if (after(toTime, today) || equalDate(toTime, today)) {
+    if (before(today, toTime) || equalDate(toTime, today)) {
       return true;
     }
     return false;
@@ -257,6 +288,7 @@ export function addDays(date: Date, number: number): Date {
   newDate.setDate(newDate.getDate() + number);
   return newDate;
 }
+/*
 export function after(date1?: Date, date2?: Date): boolean {
   if (!date1 || !date2) {
     return false;
@@ -266,6 +298,7 @@ export function after(date1?: Date, date2?: Date): boolean {
   }
   return false;
 }
+*/
 export function before(date1?: Date, date2?: Date): boolean {
   if (!date1 || !date2) {
     return false;
@@ -477,8 +510,8 @@ export function initializeStatus(s?: StatusConf): Status {
   const error: number | string = (s && s.error ? s.error : fail);
   return { timeout, fail, success, success_and_reactivated, password_expired, two_factor_required, wrong_password, locked, suspended, disabled, access_time_locked, error };
 }
-export function useUserRepository(db: DB, c: SqlConfig): SqlUserRepository {
-  return new SqlUserRepository(db, c.sql.query, c.sql.fail, c.sql.pass, c.sql.pass2, c.status, c.statusName, c.maxPasswordAge, c.time);
+export function useUserRepository(db: DB, c: SqlAuthConfig): SqlUserRepository {
+  return new SqlUserRepository(db, c.db.sql.query, c.db.sql.fail, c.db.sql.pass, c.db.sql.activate, c.status, c.db.status, c.db.maxPasswordAge, c.db.time);
 }
 export function getUser(obj: UserInfo, status?: string, s?: UserStatus, maxPasswordAge?: number): UserInfo {
   if (status && status.length > 0) {

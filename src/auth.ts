@@ -2,10 +2,11 @@ export interface StringMap {
   [key: string]: string;
 }
 export interface UserRepository {
-  getUser(userId: string): Promise<UserInfo|null|undefined>;
+  getUser(username: string): Promise<UserInfo|null|undefined>;
   pass?(userId: string, deactivated?: boolean): Promise<boolean>;
-  fail?(userId: string, failCount?: number, lockedUntilTime?: Date): Promise<boolean>;
+  fail?(userId: string, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean>;
 }
+export type UserInfoRepository = UserRepository;
 export interface Token {
   secret: string;
   expires: number;
@@ -20,7 +21,7 @@ export interface UserInfo {
   disable?: boolean;
   deactivated?: boolean;
   suspended?: boolean;
-  // lockedUntilTime?: Date;
+  lockedUntilTime?: Date;
   successTime?: Date;
   failTime?: Date;
   failCount?: number;
@@ -88,6 +89,7 @@ export interface AuthInfo {
   ip?: string;
   device?: string;
 }
+export type Login = AuthInfo;
 export interface AuthResult {
   status: number | string;
   user?: UserAccount;
@@ -165,23 +167,40 @@ export interface DB {
   query<T>(sql: string, args?: any[], m?: StringMap): Promise<T[]>;
 }
 export interface BaseConfig {
-  status?: UserStatus;
-  statusName?: string;
-  maxPasswordAge?: number;
-  time?: boolean;
+  status?: StatusConf;
+  lockedMinutes?: number;
+  maxPasswordFailed?: number;
 }
-export interface SqlConfig extends BaseConfig {
+export interface Repo {
+  status: string; // status field name
+  maxPasswordAge?: number;
+}
+export interface SqlConfig extends Repo {
+  time?: boolean;
   sql: {
     query: string;
     fail?: string;
     pass?: string;
-    pass2?: string;
+    activate?: string;
   };
 }
-export interface SqlAuthConfig extends BaseConfig {
+export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
   token: Token;
-  status?: StatusConf;
   payload: StringMap;
   account?: StringMap;
-  repo: SqlConfig;
+  userStatus?: UserStatus;
+  db: T;
+}
+export interface SqlAuthConfig extends BaseAuthConfig<SqlConfig> {
+}
+export interface DBConfig extends Repo {
+  user: string;
+  password?: string;
+  username: string;
+  successTime: string;
+  failTime: string;
+  failCount: string;
+  lockedUntilTime: string;
+}
+export interface AuthConfig extends BaseAuthConfig<DBConfig> {
 }
