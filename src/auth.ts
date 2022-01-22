@@ -7,10 +7,14 @@ export interface UserRepository {
   fail?(userId: string, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean>;
 }
 export type UserInfoRepository = UserRepository;
+export type UserService = UserRepository;
+export type UserInfoService = UserRepository;
 export interface Token {
   secret: string;
   expires: number;
 }
+export type TokenConf = Token;
+export type TokenConfig = Token;
 export interface UserInfo {
   id: string;
   username: string;
@@ -61,6 +65,7 @@ export interface StatusConf {
   access_time_locked?: number | string;
   error?: number | string;
 }
+export type StatusConfig = StatusConf;
 export interface Status {
   timeout: number | string;
   fail: number | string;
@@ -81,7 +86,7 @@ export interface ErrorMessage {
   param?: string | number | Date;
   message?: string;
 }
-export interface AuthInfo {
+export interface User {
   step?: number;
   username: string;
   password: string;
@@ -89,13 +94,16 @@ export interface AuthInfo {
   ip?: string;
   device?: string;
 }
-export type Login = AuthInfo;
-export interface AuthResult {
+export type AuthInfo = User;
+export type Info = User;
+export type Login = User;
+export interface Result {
   status: number | string;
-  user?: UserAccount;
+  user?: Account;
   message?: string;
 }
-export interface UserAccount {
+export type AuthResult = Result;
+export interface Account {
   id?: string;
   username?: string;
   contact?: string;
@@ -115,6 +123,7 @@ export interface UserAccount {
   gender?: string;
   imageURL?: string;
 }
+export type UserAccount = Account;
 export interface Privilege {
   id?: string;
   name: string;
@@ -193,6 +202,7 @@ export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
 }
 export interface SqlAuthConfig extends BaseAuthConfig<SqlConfig> {
 }
+export type Config = SqlAuthConfig;
 export interface DBConfig extends Repo {
   user: string;
   password?: string;

@@ -1,18 +1,8 @@
-import { AuthInfo, AuthResult, CustomJwtToken, DB, Module, Privilege, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, UserAccount, UserInfo, UserRepository, UserStatus } from './auth';
-
+import { Account, CustomJwtToken, DB, Module, Privilege, Result, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, User, UserInfo, UserRepository, UserStatus } from './auth';
 export * from './auth';
-export type TokenConf = Token;
-export type TokenConfig = Token;
-export type StatusConfig = StatusConf;
-export type Info = AuthInfo;
-export type User = AuthInfo;
-export type Result = AuthResult;
-export type Account = UserAccount;
-export type UserService = UserRepository;
-export type Config = SqlAuthConfig;
 
-export function useAuthenticator<T extends AuthInfo>(status: Status,
-  check: (user: T) => Promise<AuthResult>,
+export function useAuthenticator<T extends User>(status: Status,
+  check: (user: T) => Promise<Result>,
   generateToken: (payload: any, secret: string, expiresIn: number) => Promise<string | undefined>,
   token: Token,
   payload: StringMap,
@@ -25,6 +15,8 @@ export function useAuthenticator<T extends AuthInfo>(status: Status,
   return new Authenticator<T>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, check);
 }
 export const createAuthenticator = useAuthenticator;
+export const useLogin = useAuthenticator;
+export const useSignin = useAuthenticator;
 export function swap(m?: StringMap): StringMap|undefined {
   if (!m) {
     return m;
@@ -38,7 +30,7 @@ export function swap(m?: StringMap): StringMap|undefined {
   }
   return obj;
 }
-export class Authenticator<T extends AuthInfo> {
+export class Authenticator<T extends User> {
   constructor(public status: Status,
     public compare: ((v1: string, v2: string) => Promise<boolean>)|undefined,
     public generateToken: <P>(payload: P, secret: string, expiresIn: number) => Promise<string | undefined>,
@@ -49,14 +41,22 @@ export class Authenticator<T extends AuthInfo> {
     public getPrivileges?: (userId: string) => Promise<Privilege[]>,
     public lockedMinutes?: number,
     public maxPasswordFailed?: number,
-    public check?: (user: T) => Promise<AuthResult>) {
+    public check?: (user: T) => Promise<Result>) {
     this.account = swap(account);
     this.authenticate = this.authenticate.bind(this);
+    this.login = this.login.bind(this);
+    this.signin = this.signin.bind(this);
   }
   account?: StringMap;
-  async authenticate(info: T): Promise<AuthResult> {
+  login(info: T): Promise<Result> {
+    return this.authenticate(info);
+  }
+  signin(info: T): Promise<Result> {
+    return this.authenticate(info);
+  }
+  async authenticate(info: T): Promise<Result> {
     const s = this.status;
-    let result: AuthResult = { status: s.fail };
+    let result: Result = { status: s.fail };
     const username = info.username;
     const password = info.password;
     if (!username || username === '' || !password || password === '') {
@@ -71,7 +71,7 @@ export class Authenticator<T extends AuthInfo> {
         const tokenExpiredTime0 = addSeconds(new Date(), this.token.expires);
         const payload0 = result.user ? map(result.user, this.payload) : { id: info.username, username: info.username };
         const token0 = await this.generateToken(payload0, this.token.secret, this.token.expires);
-        const account0: UserAccount = {};
+        const account0: Account = {};
         account0.token = token0;
         account0.tokenExpiredTime = tokenExpiredTime0;
         result.status = s.success;
@@ -160,7 +160,7 @@ export class Authenticator<T extends AuthInfo> {
     } else {
       result.status = s.success;
     }
-    const account = mapAll<UserInfo, UserAccount>(user, this.account);
+    const account = mapAll<UserInfo, Account>(user, this.account);
     account.token = token;
     account.tokenExpiredTime = tokenExpiredTime;
 
@@ -181,6 +181,8 @@ export class Authenticator<T extends AuthInfo> {
     }
   }
 }
+export const LoginService = Authenticator;
+export const SigninService = Authenticator;
 /*
 export function mapAccount(user: User, account: UserAccount): UserAccount {
   account.id = user.id;

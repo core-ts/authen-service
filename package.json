@@ -1,6 +1,6 @@
 {
   "name": "authen-service",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "authenticator",
   "main": "./lib/index.js",
   "types": "./src/index.ts",
@@ -17,9 +17,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git@github.com/core-ts/authenticator"
+    "url": "git@github.com/core-ts/authen-service"
   },
   "keywords": [
-    "authenticator"
+    "authenticator",
+    "authen-service",
+    "authen service",
+    "authentication service"
   ]
 }
