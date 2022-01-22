@@ -19,6 +19,7 @@ export interface UserInfo {
   id: string;
   username: string;
   email?: string;
+  contact?: string;
   displayName: string;
   gender?: string;
   password?: string;
@@ -39,6 +40,7 @@ export interface UserInfo {
   accessDateTo?: Date;
   accessTimeFrom?: Date;
   accessTimeTo?: Date;
+  twoFactors?: boolean;
 
   language?: string;
   dateFormat?: string;
@@ -162,9 +164,9 @@ export interface StoredUser {
   tokens?: any;
   // privileges?: Privilege[];
 }*/
-export interface CustomJwtToken {
-  tokenExpiredTime: Date;
-  jwtTokenExpires: number;
+export interface CustomToken {
+  expiredTime: Date;
+  expires: number;
 }
 export interface Statement {
   query: string;
@@ -200,7 +202,15 @@ export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
   userStatus?: UserStatus;
   db: T;
 }
+export interface Template {
+  subject: string;
+  body: string;
+}
 export interface SqlAuthConfig extends BaseAuthConfig<SqlConfig> {
+}
+export interface SqlAuthTemplateConfig extends BaseAuthConfig<SqlConfig> {
+  expires: number;
+  template: Template;
 }
 export type Config = SqlAuthConfig;
 export interface DBConfig extends Repo {
@@ -213,4 +223,8 @@ export interface DBConfig extends Repo {
   lockedUntilTime: string;
 }
 export interface AuthConfig extends BaseAuthConfig<DBConfig> {
+}
+export interface AuthTemplateConfig extends BaseAuthConfig<DBConfig> {
+  expires: number;
+  template: Template;
 }

@@ -1,6 +1,16 @@
-import { Account, CustomJwtToken, DB, Module, Privilege, Result, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, User, UserInfo, UserRepository, UserStatus } from './auth';
+import * as util from 'util';
+import { Account, CustomToken, DB, Module, Privilege, Result, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, User, UserInfo, UserRepository, UserStatus } from './auth';
 export * from './auth';
 
+export interface Passcode {
+  expiredAt: Date;
+  code: string;
+}
+export interface CodeRepository {
+  save(id: string, passcode: string, expireAt: Date): Promise<number>;
+  load(id: string): Promise<Passcode>;
+  delete(id: string): Promise<number>;
+}
 export function useAuthenticator<T extends User>(status: Status,
   check: (user: T) => Promise<Result>,
   generateToken: (payload: any, secret: string, expiresIn: number) => Promise<string | undefined>,
@@ -11,8 +21,14 @@ export function useAuthenticator<T extends User>(status: Status,
   getPrivileges?: (username: string) => Promise<Privilege[]>,
   lockedMinutes?: number,
   maxPasswordFailed?: number,
-  compare?: (v1: string, v2: string) => Promise<boolean>): Authenticator<T> {
-  return new Authenticator<T>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, check);
+  send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
+  expires?: number,
+  codeRepository?: CodeRepository,
+  compare?: (v1: string, v2: string) => Promise<boolean>,
+  hash?: (plaintext: string) => Promise<string>,
+  hasTwoFactors?: (userId: string) => Promise<boolean>,
+  gen?: () => string): Authenticator<T> {
+  return new Authenticator<T>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, send, expires, codeRepository, hash, hasTwoFactors, gen, check);
 }
 export const createAuthenticator = useAuthenticator;
 export const useLogin = useAuthenticator;
@@ -41,13 +57,21 @@ export class Authenticator<T extends User> {
     public getPrivileges?: (userId: string) => Promise<Privilege[]>,
     public lockedMinutes?: number,
     public maxPasswordFailed?: number,
+    public send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
+    public expires?: number,
+    public codeRepository?: CodeRepository,
+    public hash?: (plaintext: string) => Promise<string>,
+    public hasTwoFactors?: (userId: string) => Promise<boolean>,
+    gen?: () => string,
     public check?: (user: T) => Promise<Result>) {
+    this.generate = (gen ? gen : generate);
     this.account = swap(account);
     this.authenticate = this.authenticate.bind(this);
     this.login = this.login.bind(this);
     this.signin = this.signin.bind(this);
   }
   account?: StringMap;
+  generate: () => string;
   login(info: T): Promise<Result> {
     return this.authenticate(info);
   }
@@ -152,9 +176,47 @@ export class Authenticator<T extends User> {
       result.status = s.access_time_locked;
       return result;
     }
-    const { tokenExpiredTime, jwtTokenExpires } = setTokenExpiredTime(user, this.token.expires);
+    const contact = user.contact ? user.contact : user.email;
+    if (contact && this.hash && this.expires && this.expires > 0 && this.codeRepository && this.send && this.compare) {
+      let twoFactors = user.twoFactors;
+      if (!twoFactors && this.hasTwoFactors) {
+        twoFactors = await this.hasTwoFactors(user.id);
+      }
+      if (twoFactors) {
+        if (!info.step || info.step <= 1) {
+          const sentCode = this.generate();
+          const savedCode = await this.hash(sentCode);
+          const codeExpired = addSeconds(new Date(), this.expires);
+          const res0 = await this.codeRepository.save(user.id, savedCode, codeExpired);
+          if (res0 > 0) {
+            await this.send(contact, sentCode, codeExpired, info.username);
+            return {status: this.status.two_factor_required};
+          } else {
+            return {status: this.status.fail};
+          }
+        } else {
+          if (!info.passcode || info.passcode.length === 0) {
+            return {status: this.status.fail};
+          }
+          const code = await this.codeRepository.load(user.id);
+          if (!code) {
+            return {status: this.status.fail};
+          }
+          if (before(code.expiredAt, new Date())) {
+            return {status: this.status.fail};
+          }
+          const validPasscode = await this.compare(info.passcode, code.code);
+          if (!validPasscode) {
+            return {status: this.status.fail};
+          } else {
+            await this.codeRepository.delete(user.id);
+          }
+        }
+      }
+    }
+    const { expiredTime, expires } = setTokenExpiredTime(user, this.token.expires);
     const payload = map(user, this.payload);
-    const token = await this.generateToken(payload, this.token.secret, jwtTokenExpires);
+    const token = await this.generateToken(payload, this.token.secret, expires);
     if (user.deactivated) {
       result.status = s.success_and_reactivated;
     } else {
@@ -162,7 +224,7 @@ export class Authenticator<T extends User> {
     }
     const account = mapAll<UserInfo, Account>(user, this.account);
     account.token = token;
-    account.tokenExpiredTime = tokenExpiredTime;
+    account.tokenExpiredTime = expiredTime;
 
     if (this.getPrivileges) {
       const privileges = await this.getPrivileges(user.id);
@@ -201,10 +263,10 @@ export function mapAccount(user: User, account: UserAccount): UserAccount {
   return account;
 }
 */
-export function setTokenExpiredTime(user: UserInfo, expires: number): CustomJwtToken {
+export function setTokenExpiredTime(user: UserInfo, expires: number): CustomToken {
   if (user.accessTimeTo == null || user.accessTimeFrom == null || user.accessDateFrom == null || user.accessDateTo == null) {
     const x = addSeconds(now(), expires / 1000);
-    return { tokenExpiredTime: x, jwtTokenExpires: expires };
+    return { expiredTime: x, expires };
   }
 
   if (before(user.accessTimeTo, user.accessTimeFrom) || equalDate(user.accessTimeTo, user.accessDateFrom)) {
@@ -222,7 +284,7 @@ export function setTokenExpiredTime(user: UserInfo, expires: number): CustomJwtT
     tokenExpiredTime = addSeconds(now(), expires / 1000);
     jwtExpiredTime = expires;
   }
-  return { tokenExpiredTime, jwtTokenExpires: jwtExpiredTime };
+  return { expiredTime: tokenExpiredTime, expires: jwtExpiredTime };
 }
 
 export function isValidAccessDate(fromDate?: Date, toDate?: Date): boolean {
@@ -270,25 +332,24 @@ export function isValidAccessTime(fromTime?: Date, toTime?: Date): boolean {
 }
 
 export function addSeconds(date: Date, number: number): Date {
-  const newDate = new Date(date);
-  newDate.setSeconds(newDate.getSeconds() + number);
-  return newDate;
+  const d = new Date(date);
+  d.setSeconds(d.getSeconds() + number);
+  return d;
 }
 export function addMinutes(date: Date, number: number): Date {
-  const newDate = new Date(date);
-  newDate.setMinutes(newDate.getMinutes() + number);
-  return newDate;
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() + number);
+  return d;
 }
 export function addHours(date: Date, number: number): Date {
-  // return moment(date).add(number, 'hours').toDate();
-  const newDate = new Date(date);
-  newDate.setHours(newDate.getHours() + number);
-  return newDate;
+  const d = new Date(date);
+  d.setHours(d.getHours() + number);
+  return d;
 }
 export function addDays(date: Date, number: number): Date {
-  const newDate = new Date(date);
-  newDate.setDate(newDate.getDate() + number);
-  return newDate;
+  const d = new Date(date);
+  d.setDate(d.getDate() + number);
+  return d;
 }
 /*
 export function after(date1?: Date, date2?: Date): boolean {
@@ -301,11 +362,11 @@ export function after(date1?: Date, date2?: Date): boolean {
   return false;
 }
 */
-export function before(date1?: Date, date2?: Date): boolean {
-  if (!date1 || !date2) {
+export function before(d1?: Date, d2?: Date): boolean {
+  if (!d1 || !d2) {
     return false;
   }
-  if (date1.getTime() - date2.getTime() < 0) {
+  if (d1.getTime() - d2.getTime() < 0) {
     return true;
   }
   return false;
@@ -314,27 +375,28 @@ export function now(): Date {
   return new Date();
 }
 // return milliseconds
-export function subTime(date1: Date, date2: Date): number {
-  if (date1 && date2) {
-    return Math.abs((date1.getTime() - date2.getTime()));
+export function subTime(d1: Date, d2: Date): number {
+  if (d1 && d2) {
+    return Math.abs((d1.getTime() - d2.getTime()));
   }
-  if (date1) {
+  if (d1) {
     return 1;
   }
-  if (date2) {
+  if (d2) {
     return -1;
   }
   return 0;
 }
-export function equalDate(date1?: Date, date2?: Date): boolean {
-  if (!date1 || !date2) {
+export function equalDate(d1?: Date, d2?: Date): boolean {
+  if (!d1 || !d2) {
     return true;
   }
-  if (date1.getTime() - date2.getTime() === 0) {
+  if (d1.getTime() - d2.getTime() === 0) {
     return true;
   }
   return false;
 }
+// tslint:disable-next-line:max-classes-per-file
 export class PrivilegesLoader {
   constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string, public count?: number) {
     this.privileges = this.privileges.bind(this);
@@ -358,6 +420,7 @@ export class PrivilegesLoader {
 }
 export const PrivilegeService = PrivilegesLoader;
 export const PrivilegeRepository = PrivilegesLoader;
+// tslint:disable-next-line:max-classes-per-file
 export class PrivilegesReader {
   constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string) {
     this.privileges = this.privileges.bind(this);
@@ -474,7 +537,7 @@ export function map<T, R>(obj: T, m: StringMap): R {
   }
   return obj2;
 }
-export const deletedFields = ['password', 'disable', 'deactivated', 'suspended', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo'];
+export const deletedFields = ['password', 'disable', 'deactivated', 'suspended', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo', 'twoFactors'];
 export function mapAll<T, R>(obj: T, m?: StringMap): R {
   if (!m) {
     return obj as any;
@@ -539,9 +602,10 @@ export function getUser(obj: UserInfo, status?: string, s?: UserStatus, maxPassw
 export const createUserRepository = useUserRepository;
 export const createUserService = useUserRepository;
 export const useUserService = useUserRepository;
+// tslint:disable-next-line:max-classes-per-file
 export class SqlUserRepository implements UserRepository {
   public time: boolean;
-  constructor(public db: DB, public query: string, public sqlFail?: string, public sqlPass?: string, public sqlPass2?: string, public status?: UserStatus, public statusName?: string, public maxPasswordAge?: number, time?: boolean) {
+  constructor(public db: DB, public query: string, public sqlFail?: string, public sqlPass?: string, public activate?: string, public status?: UserStatus, public statusName?: string, public maxPasswordAge?: number, time?: boolean) {
     this.time = (time !== undefined ? true : false);
   }
   getUser(username: string): Promise<UserInfo | null | undefined> {
@@ -558,7 +622,7 @@ export class SqlUserRepository implements UserRepository {
     if (!this.sqlPass || this.sqlPass.length === 0) {
       return Promise.resolve(true);
     }
-    if (!this.sqlPass2 || this.sqlPass2.length === 0) {
+    if (!this.activate || this.activate.length === 0) {
       if (deactivated && this.status && this.status.activated) {
         const ps: any[] = (this.time ? [new Date(), this.status.activated, userId] : [this.status.activated, userId]);
         return this.db.exec(this.sqlPass, ps).then(n => n > 0);
@@ -571,7 +635,7 @@ export class SqlUserRepository implements UserRepository {
       const ps1: any[] = (this.time ? [new Date(), userId] : [userId]);
       const s1: Statement = { query: this.sqlPass, params: ps1 };
       const ps2: any[] = (this.time ? [new Date(), this.status.activated, userId] : [this.status.activated, userId]);
-      const s2: Statement = { query: this.sqlPass2, params: ps2 };
+      const s2: Statement = { query: this.activate, params: ps2 };
       return this.db.execBatch([s1, s2]).then(n => n > 0);
     } else {
       const ps: any[] = (this.time ? [new Date(), userId] : [userId]);
@@ -580,3 +644,57 @@ export class SqlUserRepository implements UserRepository {
   }
 }
 export const SqlUserService = SqlUserRepository;
+export function generate(length?: number): string {
+  if (!length) {
+    length = 6;
+  }
+  return padLeft(Math.floor(Math.random() * Math.floor(Math.pow(10, length) - 1)).toString(), length, '0');
+}
+export function padLeft(str: string, length: number, pad: string) {
+  if (str.length >= length) {
+    return str;
+  }
+  let str2 = str;
+  while (str2.length < length) {
+    str2 = pad + str2;
+  }
+  return str2;
+}
+export type EmailData = string|{ name?: string; email: string; };
+export interface MailContent {
+  type: string;
+  value: string;
+}
+export interface MailData {
+  to?: EmailData|EmailData[];
+
+  from: EmailData;
+  replyTo?: EmailData;
+
+  subject?: string;
+  html?: string;
+  content?: MailContent[];
+}
+// tslint:disable-next-line:max-classes-per-file
+export class MailSender {
+  constructor(
+    public sendMail: (mailData: MailData) => Promise<boolean>,
+    public from: EmailData,
+    public body: string,
+    public subject: string
+  ) {
+    this.send = this.send.bind(this);
+  }
+  send(to: string, passcode: string, expireAt: Date): Promise<boolean> {
+    const diff =  Math.abs(Math.round(((Date.now() - expireAt.getTime()) / 1000) / 60));
+    const body = util.format(this.body, ...[passcode, diff]);
+    const msg = {
+      to,
+      from: this.from,
+      subject: this.subject,
+      html: body
+    };
+    return this.sendMail(msg);
+  }
+}
+export const CodeMailSender = MailSender;
