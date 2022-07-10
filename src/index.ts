@@ -8,7 +8,7 @@ export interface Passcode {
 }
 export interface CodeRepository<ID> {
   save(id: ID, passcode: string, expireAt: Date): Promise<number>;
-  load(id: ID): Promise<Passcode>;
+  load(id: ID): Promise<Passcode|undefined|null>;
   delete(id: ID): Promise<number>;
 }
 export function useAuthenticator<T extends User, ID>(status: Status,
