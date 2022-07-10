@@ -1,22 +1,22 @@
 export interface StringMap {
   [key: string]: string;
 }
-export interface UserRepository {
-  getUser(username: string): Promise<UserInfo|null|undefined>;
-  pass?(userId: string, deactivated?: boolean): Promise<boolean>;
-  fail?(userId: string, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean>;
+export interface UserRepository<ID> {
+  getUser(username: string): Promise<UserInfo<ID>|null|undefined>;
+  pass?(userId: ID, deactivated?: boolean): Promise<boolean>;
+  fail?(userId: ID, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean>;
 }
-export type UserInfoRepository = UserRepository;
-export type UserService = UserRepository;
-export type UserInfoService = UserRepository;
+export type UserInfoRepository<ID> = UserRepository<ID>;
+export type UserService<ID> = UserRepository<ID>;
+export type UserInfoService<ID> = UserRepository<ID>;
 export interface Token {
   secret: string;
   expires: number;
 }
 export type TokenConf = Token;
 export type TokenConfig = Token;
-export interface UserInfo {
-  id: string;
+export interface UserInfo<ID> {
+  id: ID;
   username: string;
   email?: string;
   contact?: string;
@@ -173,6 +173,7 @@ export interface Statement {
   params?: any[];
 }
 export interface DB {
+  param(i: number): string;
   exec(sql: string, args?: any[], ctx?: any): Promise<number>;
   execBatch(statements: Statement[], firstSuccess?: boolean, ctx?: any): Promise<number>;
   query<T>(sql: string, args?: any[], m?: StringMap): Promise<T[]>;
@@ -186,15 +187,6 @@ export interface Repo {
   status: string; // status field name
   maxPasswordAge?: number;
 }
-export interface SqlConfig extends Repo {
-  time?: boolean;
-  sql: {
-    query: string;
-    fail?: string;
-    pass?: string;
-    activate?: string;
-  };
-}
 export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
   token: Token;
   payload: StringMap;
@@ -206,14 +198,17 @@ export interface Template {
   subject: string;
   body: string;
 }
-export interface SqlAuthConfig extends BaseAuthConfig<SqlConfig> {
+export interface SqlAuthConfig extends BaseAuthConfig<DBConfig> {
+  query: string;
 }
-export interface SqlAuthTemplateConfig extends BaseAuthConfig<SqlConfig> {
+export interface SqlAuthTemplateConfig extends BaseAuthConfig<DBConfig> {
+  query: string;
   expires: number;
   template: Template;
 }
 export type Config = SqlAuthConfig;
 export interface DBConfig extends Repo {
+  id?: string;
   user: string;
   password?: string;
   username: string;

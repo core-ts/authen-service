@@ -1,34 +1,34 @@
 import * as util from 'util';
-import { Account, CustomToken, DB, Module, Privilege, Result, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, User, UserInfo, UserRepository, UserStatus } from './auth';
+import { Account, CustomToken, DB, DBConfig, Module, Privilege, Result, SqlAuthConfig, Statement, Status, StatusConf, StringMap, Token, User, UserInfo, UserRepository, UserStatus } from './auth';
 export * from './auth';
 
 export interface Passcode {
   expiredAt: Date;
   code: string;
 }
-export interface CodeRepository {
-  save(id: string, passcode: string, expireAt: Date): Promise<number>;
-  load(id: string): Promise<Passcode>;
-  delete(id: string): Promise<number>;
+export interface CodeRepository<ID> {
+  save(id: ID, passcode: string, expireAt: Date): Promise<number>;
+  load(id: ID): Promise<Passcode>;
+  delete(id: ID): Promise<number>;
 }
-export function useAuthenticator<T extends User>(status: Status,
+export function useAuthenticator<T extends User, ID>(status: Status,
   check: (user: T) => Promise<Result>,
   generateToken: (payload: any, secret: string, expiresIn: number) => Promise<string | undefined>,
   token: Token,
   payload: StringMap,
   account?: StringMap,
-  repository?: UserRepository,
-  getPrivileges?: (username: string) => Promise<Privilege[]>,
+  repository?: UserRepository<ID>,
+  getPrivileges?: (userId: ID) => Promise<Privilege[]>,
   lockedMinutes?: number,
   maxPasswordFailed?: number,
   send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
   expires?: number,
-  codeRepository?: CodeRepository,
+  codeRepository?: CodeRepository<ID>,
   compare?: (v1: string, v2: string) => Promise<boolean>,
   hash?: (plaintext: string) => Promise<string>,
-  hasTwoFactors?: (userId: string) => Promise<boolean>,
-  gen?: () => string): Authenticator<T> {
-  return new Authenticator<T>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, send, expires, codeRepository, hash, hasTwoFactors, gen, check);
+  hasTwoFactors?: (userId: ID) => Promise<boolean>,
+  gen?: () => string): Authenticator<T, ID> {
+  return new Authenticator<T, ID>(status, compare, generateToken, token, payload, account, repository, getPrivileges, lockedMinutes, maxPasswordFailed, send, expires, codeRepository, hash, hasTwoFactors, gen, check);
 }
 export const createAuthenticator = useAuthenticator;
 export const useLogin = useAuthenticator;
@@ -46,22 +46,22 @@ export function swap(m?: StringMap): StringMap|undefined {
   }
   return obj;
 }
-export class Authenticator<T extends User> {
+export class Authenticator<T extends User, ID> {
   constructor(public status: Status,
     public compare: ((v1: string, v2: string) => Promise<boolean>)|undefined,
     public generateToken: <P>(payload: P, secret: string, expiresIn: number) => Promise<string | undefined>,
     public token: Token,
     public payload: StringMap,
     account?: StringMap,
-    public repository?: UserRepository,
-    public getPrivileges?: (userId: string) => Promise<Privilege[]>,
+    public repository?: UserRepository<ID>,
+    public getPrivileges?: (userId: ID) => Promise<Privilege[]>,
     public lockedMinutes?: number,
     public maxPasswordFailed?: number,
     public send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
     public expires?: number,
-    public codeRepository?: CodeRepository,
+    public codeRepository?: CodeRepository<ID>,
     public hash?: (plaintext: string) => Promise<string>,
-    public hasTwoFactors?: (userId: string) => Promise<boolean>,
+    public hasTwoFactors?: (userId: ID) => Promise<boolean>,
     gen?: () => string,
     public check?: (user: T) => Promise<Result>) {
     this.generate = (gen ? gen : generate);
@@ -112,25 +112,24 @@ export class Authenticator<T extends User> {
       // result.message = 'UserNotExisted';
       return result;
     }
+    const tnow = new Date();
+    if (user.lockedUntilTime) {
+      if (user.lockedUntilTime.getTime() > tnow.getTime()) {
+        result.status = s.locked;
+        return result;
+      }
+    }
     if (!this.check && this.compare) {
       const valid = await this.compare(password, user.password ? user.password : '');
       if (!valid) {
         result.status = s.wrong_password;
         if (this.repository.fail) {
-          const tnow = new Date();
-          if (user.lockedUntilTime) {
-            if (before(user.lockedUntilTime, tnow)) {
-              await this.repository.fail(user.id, 0, null);
-              return result;
-            }
-          } else {
-            let lockedUntilTime: Date|undefined;
-            if (this.lockedMinutes && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
-              lockedUntilTime = addMinutes(tnow, this.lockedMinutes);
-            }
-            await this.repository.fail(user.id, user.failCount, lockedUntilTime);
-            return result;
+          let lockedUntilTime: Date|undefined;
+          if (this.lockedMinutes && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
+            lockedUntilTime = addMinutes(tnow, this.lockedMinutes);
           }
+          await this.repository.fail(user.id, user.failCount, lockedUntilTime);
+          return result;
         } else {
           return result;
         }
@@ -151,7 +150,7 @@ export class Authenticator<T extends User> {
         result.status = s.locked;
         return result;
       }
-    } else if (user.failTime && user.failTime instanceof Date && this.lockedMinutes !== undefined && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount > this.maxPasswordFailed) {
+    } else if (user.failTime && user.failTime instanceof Date && this.lockedMinutes !== undefined && user.failCount !== undefined && this.maxPasswordFailed !== undefined && user.failCount >= this.maxPasswordFailed) {
       const lockedUntilTime = addMinutes(user.failTime, this.lockedMinutes);
       const locked = (lockedUntilTime && (subTime(now(), lockedUntilTime) < 0));
       if (locked) {
@@ -202,7 +201,7 @@ export class Authenticator<T extends User> {
           if (!code) {
             return {status: this.status.fail};
           }
-          if (before(code.expiredAt, new Date())) {
+          if (code.expiredAt.getTime() < tnow.getTime()) {
             return {status: this.status.fail};
           }
           const validPasscode = await this.compare(info.passcode, code.code);
@@ -222,7 +221,7 @@ export class Authenticator<T extends User> {
     } else {
       result.status = s.success;
     }
-    const account = mapAll<UserInfo, Account>(user, this.account);
+    const account = mapAll<UserInfo<ID>, Account>(user, this.account);
     account.token = token;
     account.tokenExpiredTime = expiredTime;
 
@@ -263,7 +262,7 @@ export function mapAccount(user: User, account: UserAccount): UserAccount {
   return account;
 }
 */
-export function setTokenExpiredTime(user: UserInfo, expires: number): CustomToken {
+export function setTokenExpiredTime<ID>(user: UserInfo<ID>, expires: number): CustomToken {
   if (user.accessTimeTo == null || user.accessTimeFrom == null || user.accessDateFrom == null || user.accessDateTo == null) {
     const x = addSeconds(now(), expires / 1000);
     return { expiredTime: x, expires };
@@ -521,23 +520,26 @@ export function sub(n1?: number, n2?: number): number {
   }
   return 0;
 }
-export function map<T, R>(obj: T, m: StringMap): R {
+export function map<T>(obj: T, m?: StringMap): any {
   if (!m) {
-    return obj as any;
+    return obj;
   }
   const mkeys = Object.keys(m);
+  if (mkeys.length === 0) {
+    return obj;
+  }
   const obj2: any = {};
-  for (const key of mkeys) {
+  const keys = Object.keys(obj);
+  for (const key of keys) {
     let k0 = m[key];
-    const v = (obj as any)[k0];
-    if (v !== undefined) {
+    if (!k0) {
       k0 = key;
-      obj2[key] = v;
     }
+    obj2[k0] = (obj as any)[key];
   }
   return obj2;
 }
-export const deletedFields = ['password', 'disable', 'deactivated', 'suspended', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo', 'twoFactors'];
+export const deletedFields = ['password', 'disable', 'deactivated', 'suspended', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo', 'twoFactors', 'history'];
 export function mapAll<T, R>(obj: T, m?: StringMap): R {
   if (!m) {
     return obj as any;
@@ -575,10 +577,15 @@ export function initializeStatus(s?: StatusConf): Status {
   const error: number | string = (s && s.error ? s.error : fail);
   return { timeout, fail, success, success_and_reactivated, password_expired, two_factor_required, wrong_password, locked, suspended, disabled, access_time_locked, error };
 }
-export function useUserRepository(db: DB, c: SqlAuthConfig): SqlUserRepository {
-  return new SqlUserRepository(db, c.db.sql.query, c.db.sql.fail, c.db.sql.pass, c.db.sql.activate, c.status, c.db.status, c.db.maxPasswordAge, c.db.time);
+export const fields = ['userId', 'displayName', 'lockedUntilTime', 'successTime', 'failTime', 'failCount', 'passwordModifiedTime', 'maxPasswordAge', 'userType', 'accessDateFrom', 'accessDateTo', 'accessTimeFrom', 'accessTimeTo', 'twoFactors', 'dateFormat', 'timeFormat', 'imageURL'];
+export function createMap(): StringMap {
+  const m: StringMap = {};
+  for (const s of fields) {
+    m[s.toLowerCase()] = s;
+  }
+  return m;
 }
-export function getUser(obj: UserInfo, status?: string, s?: UserStatus, maxPasswordAge?: number): UserInfo {
+export function getUser<ID>(obj: UserInfo<ID>, status?: string, s?: UserStatus, maxPasswordAge?: number): UserInfo<ID> {
   if (status && status.length > 0) {
     const t = (obj as any)[status];
     if (t !== undefined && t != null && s) {
@@ -599,49 +606,140 @@ export function getUser(obj: UserInfo, status?: string, s?: UserStatus, maxPassw
   }
   return obj;
 }
+export function useUserRepository<ID, C extends SqlAuthConfig>(db: DB, c: C, m?: StringMap): SqlUserRepository<ID> {
+  const n = (m ? m : createMap());
+  return new SqlUserRepository(db, c.db, c.query, c.status, n);
+}
 export const createUserRepository = useUserRepository;
 export const createUserService = useUserRepository;
 export const useUserService = useUserRepository;
 // tslint:disable-next-line:max-classes-per-file
-export class SqlUserRepository implements UserRepository {
-  public time: boolean;
-  constructor(public db: DB, public query: string, public sqlFail?: string, public sqlPass?: string, public activate?: string, public status?: UserStatus, public statusName?: string, public maxPasswordAge?: number, time?: boolean) {
-    this.time = (time !== undefined ? true : false);
+export class SqlUserRepository<ID> implements UserRepository<ID> {
+  constructor(public db: DB, public conf: DBConfig, public query: string, public status?: UserStatus, mp?: StringMap) {
+    this.map = mp;
+    this.id = !this.conf.id || this.conf.id.length === 0 ? 'id' : this.conf.id;
+    this.password = conf.password ? conf.password : conf.user;
+    this.getUser = this.getUser.bind(this);
+    this.pass = this.pass.bind(this);
+    this.fail = this.fail.bind(this);
   }
-  getUser(username: string): Promise<UserInfo | null | undefined> {
-    return this.db.query<UserInfo>(this.query, [username]).then(v => !v || v.length <= 0 ? undefined : getUser(v[0], this.statusName, this.status, this.maxPasswordAge));
+  id: string;
+  password: string;
+  fields: any;
+  map?: StringMap;
+  getUser(username: string): Promise<UserInfo<ID> | null | undefined> {
+    const c = this.conf;
+    return this.db.query<UserInfo<ID>>(this.query, [username]).then(v => {
+      return !v || v.length <= 0 ? undefined : getUser(map(v[0], this.map), c.status, this.status, c.maxPasswordAge);
+    });
   }
-  fail(userId: string): Promise<boolean> {
-    if (!this.sqlFail || this.sqlFail.length === 0) {
+  pass(userId: ID, deactivated?: boolean): Promise<boolean> {
+    const c = this.conf;
+    const pass: any = {};
+    if (c.successTime.length > 0) {
+      pass[c.successTime] = new Date();
+    }
+    if (c.failTime.length > 0) {
+      pass[c.failTime] = null;
+    }
+    if (c.failCount.length > 0) {
+      pass[c.failCount] = 0;
+    }
+    if (c.lockedUntilTime.length > 0) {
+      pass[c.lockedUntilTime] = null;
+    }
+    const keys = Object.keys(pass);
+    const l = keys.length;
+    if (l === 0) {
       return Promise.resolve(true);
     }
-    const ps: any[] = (this.time ? [new Date(), userId] : [userId]);
-    return this.db.exec(this.sqlFail, ps).then(n => n > 0);
-  }
-  pass(userId: string, deactivated?: boolean): Promise<boolean> {
-    if (!this.sqlPass || this.sqlPass.length === 0) {
-      return Promise.resolve(true);
-    }
-    if (!this.activate || this.activate.length === 0) {
-      if (deactivated && this.status && this.status.activated) {
-        const ps: any[] = (this.time ? [new Date(), this.status.activated, userId] : [this.status.activated, userId]);
-        return this.db.exec(this.sqlPass, ps).then(n => n > 0);
+    if (!deactivated || !this.status || c.status.length === 0) {
+      const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId);
+      return this.db.exec(stmt.query, stmt.params).then(v => v > 0 ? true : false);
+    } else {
+      const activated = this.status.activated;
+      if (activated && activated !== '') {
+        if (c.user === c.password || c.password === undefined) {
+          pass[c.status] = activated;
+          const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId);
+          return this.db.exec(stmt.query, stmt.params).then(v => v > 0 ? true : false);
+        } else {
+          const stmt1 = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId);
+          const query = `update ${c.user} set ${c.status} = ${this.db.param(1)} where ${this.id} = ${this.db.param(2)}`;
+          const params: any[] = [activated, userId];
+          const stmt2: Statement = {query, params};
+          return this.db.execBatch([stmt1, stmt2], true).then(v => v > 0 ? true : false);
+        }
       } else {
-        const ps: any[] = (this.time ? [new Date(), userId] : [userId]);
-        return this.db.exec(this.sqlPass, ps).then(n => n > 0);
+        const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId);
+        return this.db.exec(stmt.query, stmt.params).then(v => v > 0 ? true : false);
       }
     }
-    if (deactivated && this.status && this.status.activated) {
-      const ps1: any[] = (this.time ? [new Date(), userId] : [userId]);
-      const s1: Statement = { query: this.sqlPass, params: ps1 };
-      const ps2: any[] = (this.time ? [new Date(), this.status.activated, userId] : [this.status.activated, userId]);
-      const s2: Statement = { query: this.activate, params: ps2 };
-      return this.db.execBatch([s1, s2]).then(n => n > 0);
-    } else {
-      const ps: any[] = (this.time ? [new Date(), userId] : [userId]);
-      return this.db.exec(this.sqlPass, ps).then(n => n > 0);
+  }
+  fail(userId: ID, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean> {
+    const c = this.conf;
+    const pass: any = {};
+    if (c.failTime.length > 0) {
+      pass[c.failTime] = new Date();
+    }
+    if (c.failTime.length > 0) {
+      pass[c.failCount] = new Date();
+    }
+    if (c.failCount.length > 0 && failCount !== undefined) {
+      pass[c.failCount] = failCount + 1;
+    }
+    if (lockedUntilTime !== undefined && c.lockedUntilTime.length > 0) {
+      pass[c.lockedUntilTime] = lockedUntilTime;
+    }
+    const keys = Object.keys(pass);
+    const l = keys.length;
+    if (keys.length === 0) {
+      return Promise.resolve(true);
+    }
+    const stmt = buildUpdate(pass, this.db.param);
+    const query = `update ${this.password} set ${stmt.query} where ${this.id} = ${this.db.param(l + 1)}`;
+    const params: any[] = [];
+    if (stmt.params && stmt.params.length > 0) {
+      for (const pr of stmt.params) {
+        params.push(pr);
+      }
+    }
+    params.push(userId);
+    return this.db.exec(query, params).then(v => v > 0 ? true : false);
+  }
+}
+export function buildUpdatePassword<ID, T>(pass: T, buildParam: (i: number) => string, table: string, idName: string, id: ID): Statement {
+  const stmt = buildUpdate(pass, buildParam);
+  const k = stmt.params ? stmt.params.length + 1 : 1;
+  const query = `update ${table} set ${stmt.query} where ${idName} = ${buildParam(k)}`;
+  const params: any[] = [];
+  if (stmt.params && stmt.params.length > 0) {
+    for (const pr of stmt.params) {
+      params.push(pr);
     }
   }
+  params.push(id);
+  stmt.query = query;
+  stmt.params = params;
+  return stmt;
+}
+export function buildUpdate<T>(obj: T, buildParam: (i: number) => string): Statement {
+  const keys = Object.keys(obj);
+  const cols: string[] = [];
+  const params: any[] = [];
+  const o: any = obj;
+  let i = 1;
+  for (const key of keys) {
+    const v = o[key];
+    if (v != null) {
+      cols.push(`${key} = ${buildParam(i++)}`);
+      params.push(v);
+    } else if (v == null) {
+      cols.push(`${key} = null`);
+    }
+  }
+  const query = cols.join(',');
+  return { query, params};
 }
 export const SqlUserService = SqlUserRepository;
 export function generate(length?: number): string {
