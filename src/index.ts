@@ -529,7 +529,7 @@ export function map<T>(obj: T, m?: StringMap): any {
     return obj;
   }
   const obj2: any = {};
-  const keys = Object.keys(obj);
+  const keys = Object.keys(obj as any);
   for (const key of keys) {
     let k0 = m[key];
     if (!k0) {
@@ -549,7 +549,7 @@ export function mapAll<T, R>(obj: T, m?: StringMap): R {
     return obj as any;
   }
   const obj2: any = {};
-  const keys = Object.keys(obj);
+  const keys = Object.keys(obj as any);
   for (const key of keys) {
     let k0 = m[key];
     if (!k0) {
@@ -724,7 +724,7 @@ export function buildUpdatePassword<ID, T>(pass: T, buildParam: (i: number) => s
   return stmt;
 }
 export function buildUpdate<T>(obj: T, buildParam: (i: number) => string): Statement {
-  const keys = Object.keys(obj);
+  const keys = Object.keys(obj as any);
   const cols: string[] = [];
   const params: any[] = [];
   const o: any = obj;
