@@ -179,7 +179,7 @@ export interface DB {
   query<T>(sql: string, args?: any[], m?: StringMap): Promise<T[]>;
 }
 export interface BaseConfig {
-  status?: StatusConf;
+  status: StatusConf;
   lockedMinutes?: number;
   maxPasswordFailed?: number;
 }

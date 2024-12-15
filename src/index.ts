@@ -113,12 +113,6 @@ export class Authenticator<T extends User, ID> {
       return result;
     }
     const tnow = new Date();
-    if (user.lockedUntilTime) {
-      if (user.lockedUntilTime.getTime() > tnow.getTime()) {
-        result.status = s.locked;
-        return result;
-      }
-    }
     if (!this.check && this.compare) {
       const valid = await this.compare(password, user.password ? user.password : '');
       if (!valid) {
@@ -133,6 +127,12 @@ export class Authenticator<T extends User, ID> {
         } else {
           return result;
         }
+      }
+    }
+    if (user.lockedUntilTime) {
+      if (user.lockedUntilTime.getTime() > tnow.getTime()) {
+        result.status = s.locked;
+        return result;
       }
     }
     if (user.disable) {
@@ -529,13 +529,16 @@ export function map<T>(obj: T, m?: StringMap): any {
     return obj;
   }
   const obj2: any = {};
-  const keys = Object.keys(obj as any);
+  const keys = Object.keys(m as any);
   for (const key of keys) {
     let k0 = m[key];
     if (!k0) {
       k0 = key;
     }
-    obj2[k0] = (obj as any)[key];
+    const v = (obj as any)[key];
+    if (v !== undefined) {
+      obj2[k0] = v;
+    }
   }
   return obj2;
 }
@@ -629,8 +632,8 @@ export class SqlUserRepository<ID> implements UserRepository<ID> {
   map?: StringMap;
   getUser(username: string): Promise<UserInfo<ID> | null | undefined> {
     const c = this.conf;
-    return this.db.query<UserInfo<ID>>(this.query, [username]).then(v => {
-      return !v || v.length <= 0 ? undefined : getUser(map(v[0], this.map), c.status, this.status, c.maxPasswordAge);
+    return this.db.query<UserInfo<ID>>(this.query, [username], this.map).then(v => {
+      return !v || v.length <= 0 ? undefined : getUser(v[0], c.status, this.status, c.maxPasswordAge);
     });
   }
   pass(userId: ID, deactivated?: boolean): Promise<boolean> {
@@ -681,9 +684,6 @@ export class SqlUserRepository<ID> implements UserRepository<ID> {
     const pass: any = {};
     if (c.failTime.length > 0) {
       pass[c.failTime] = new Date();
-    }
-    if (c.failTime.length > 0) {
-      pass[c.failCount] = new Date();
     }
     if (c.failCount.length > 0 && failCount !== undefined) {
       pass[c.failCount] = failCount + 1;
