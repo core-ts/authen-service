@@ -163,7 +163,7 @@ export class Authenticator<T extends User, ID> {
             this.lockedMinutes &&
             user.failCount !== undefined &&
             this.maxPasswordFailed !== undefined &&
-            user.failCount > this.maxPasswordFailed
+            user.failCount >= this.maxPasswordFailed
           ) {
             lockedUntilTime = addMinutes(tnow, this.lockedMinutes);
           }
@@ -315,7 +315,7 @@ export function mapAccount(user: User, account: UserAccount): UserAccount {
 }
 */
 export function setTokenExpiredTime<ID>(user: UserInfo<ID>, expires: number): CustomToken {
-  if (user.accessTimeTo == null || user.accessTimeFrom == null || user.accessDateFrom == null || user.accessDateTo == null) {
+  if (!user.accessTimeTo || !user.accessTimeFrom || !user.accessDateFrom || !user.accessDateTo) {
     const x = addSeconds(now(), expires / 1000);
     return { expiredTime: x, expires };
   }
@@ -328,9 +328,9 @@ export function setTokenExpiredTime<ID>(user: UserInfo<ID>, expires: number): Cu
   let tokenExpiredTime: Date = new Date();
   let jwtExpiredTime = 0;
 
-  if (expires > subTime(user.accessTimeTo, now())) {
+  if (expires > Math.abs(subTime(user.accessTimeTo, now())) ) {
     tokenExpiredTime = addSeconds(now(), subTime(user.accessTimeTo, now()));
-    jwtExpiredTime = subTime(user.accessTimeTo, now()) / 1000;
+    jwtExpiredTime = Math.abs(subTime(user.accessTimeTo, now())) / 1000;
   } else {
     tokenExpiredTime = addSeconds(now(), expires / 1000);
     jwtExpiredTime = expires;
@@ -428,7 +428,10 @@ export function now(): Date {
 // return milliseconds
 export function subTime(d1: Date, d2: Date): number {
   if (d1 && d2) {
-    return Math.abs(d1.getTime() - d2.getTime());
+    const n1 = d1.getTime()
+    const n2 = d2.getTime()
+    const x = n1 - n2
+    return x
   }
   if (d1) {
     return 1;
@@ -711,7 +714,7 @@ export function getUser<ID>(obj: UserInfo<ID>, status?: string, s?: UserStatus, 
 }
 export function useUserRepository<ID, C extends SqlAuthConfig>(db: DB, c: C, m?: StringMap): SqlUserRepository<ID> {
   const n = m ? m : createMap();
-  return new SqlUserRepository(db, c.db, c.query, c.status, n);
+  return new SqlUserRepository(db, c.db, c.query, c.userStatus, n);
 }
 export const createUserRepository = useUserRepository;
 export const createUserService = useUserRepository;
