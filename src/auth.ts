@@ -2,9 +2,9 @@ export interface StringMap {
   [key: string]: string;
 }
 export interface UserRepository<ID> {
-  getUser(username: string): Promise<UserInfo<ID>|null|undefined>;
+  getUser(username: string): Promise<UserInfo<ID> | null | undefined>;
   pass?(userId: ID, deactivated?: boolean): Promise<boolean>;
-  fail?(userId: ID, failCount?: number, lockedUntilTime?: Date|null): Promise<boolean>;
+  fail?(userId: ID, failCount?: number, lockedUntilTime?: Date | null): Promise<boolean>;
 }
 export type UserInfoRepository<ID> = UserRepository<ID>;
 export type UserService<ID> = UserRepository<ID>;
@@ -217,8 +217,7 @@ export interface DBConfig extends Repo {
   failCount: string;
   lockedUntilTime: string;
 }
-export interface AuthConfig extends BaseAuthConfig<DBConfig> {
-}
+export interface AuthConfig extends BaseAuthConfig<DBConfig> {}
 export interface AuthTemplateConfig extends BaseAuthConfig<DBConfig> {
   expires: number;
   template: Template;
