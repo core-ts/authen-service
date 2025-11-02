@@ -189,7 +189,7 @@ export interface Repo {
 }
 export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
   token: Token
-  payload: StringMap
+  // payload: StringMap
   account?: StringMap
   userStatus?: UserStatus
   db: T

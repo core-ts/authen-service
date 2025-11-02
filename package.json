@@ -1,6 +1,6 @@
 {
   "name": "authen-service",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "authenticator",
   "main": "./lib/index.js",
   "types": "./src/index.ts",
