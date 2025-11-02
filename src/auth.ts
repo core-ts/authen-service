@@ -112,9 +112,9 @@ export interface Account {
   email?: string
   phone?: string
   displayName?: string
-  passwordExpiredTime?: Date
-  token?: string
-  tokenExpiredTime?: Date
+  // passwordExpiredTime?: Date
+  // token?: string;
+  // tokenExpiredTime?: Date;
   newUser?: boolean
   userType?: string
   roles?: string[]
