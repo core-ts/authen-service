@@ -112,9 +112,9 @@ export interface Account {
   email?: string
   phone?: string
   displayName?: string
-  passwordExpiredTime?: Date
-  token?: string
-  tokenExpiredTime?: Date
+  // passwordExpiredTime?: Date
+  // token?: string;
+  // tokenExpiredTime?: Date;
   newUser?: boolean
   userType?: string
   roles?: string[]
@@ -189,7 +189,7 @@ export interface Repo {
 }
 export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
   token: Token
-  payload: StringMap
+  // payload: StringMap
   account?: StringMap
   userStatus?: UserStatus
   db: T
