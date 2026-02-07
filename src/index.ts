@@ -12,6 +12,7 @@ import {
   Status,
   StatusConf,
   StringMap,
+  Token,
   User,
   UserInfo,
   UserRepository,
@@ -31,6 +32,9 @@ export interface CodeRepository<ID> {
 export function useAuthenticator<T extends User, ID>(
   status: Status,
   check: (user: T) => Promise<Result>,
+  generateToken: (payload: any, secret: string, expiresIn: number) => Promise<string | undefined>,
+  token: Token,
+  payload: StringMap,
   account?: StringMap,
   repository?: UserRepository<ID>,
   getPrivileges?: (userId: ID) => Promise<Privilege[]>,
@@ -47,6 +51,9 @@ export function useAuthenticator<T extends User, ID>(
   return new Authenticator<T, ID>(
     status,
     compare,
+    generateToken,
+    token,
+    payload,
     account,
     repository,
     getPrivileges,
@@ -81,6 +88,9 @@ export class Authenticator<T extends User, ID> {
   constructor(
     public status: Status,
     public compare: ((v1: string, v2: string) => Promise<boolean>) | undefined,
+    public generateToken: <P>(payload: P, secret: string, expiresIn: number) => Promise<string | undefined>,
+    public token: Token,
+    public payload: StringMap,
     account?: StringMap,
     public repository?: UserRepository<ID>,
     public getPrivileges?: (userId: ID) => Promise<Privilege[]>,
@@ -122,7 +132,12 @@ export class Authenticator<T extends User, ID> {
         return result
       }
       if (!this.repository) {
+        const tokenExpiredTime0 = addSeconds(new Date(), this.token.expires)
+        const payload0 = result.user ? map(result.user, this.payload) : { id: info.username, username: info.username }
+        const token0 = await this.generateToken(payload0, this.token.secret, this.token.expires)
         const account0: Account = {}
+        account0.token = token0
+        account0.tokenExpiredTime = tokenExpiredTime0
         result.status = s.success
         result.user = account0
         return result
@@ -245,12 +260,17 @@ export class Authenticator<T extends User, ID> {
         }
       }
     }
+    const { expiredTime, expires } = setTokenExpiredTime(user, this.token.expires)
+    const payload = map(user, this.payload)
+    const token = await this.generateToken(payload, this.token.secret, expires)
     if (user.deactivated) {
       result.status = s.success_and_reactivated
     } else {
       result.status = s.success
     }
     const account = mapAll<UserInfo<ID>, Account>(user, this.account)
+    account.token = token
+    account.tokenExpiredTime = expiredTime
 
     if (this.getPrivileges) {
       const privileges = await this.getPrivileges(user.id)
@@ -550,7 +570,6 @@ export function sub(n1?: number, n2?: number): number {
   }
   return 0
 }
-// use to map payload for JWT
 export function map<T>(obj: T, m?: StringMap): any {
   if (!m) {
     return obj
@@ -737,24 +756,24 @@ export class SqlUserRepository<ID> implements UserRepository<ID> {
     }
     if (!deactivated || !this.status || c.status.length === 0) {
       const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId)
-      return this.db.exec(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
+      return this.db.execute(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
     } else {
       const activated = this.status.activated
       if (activated && activated !== "") {
         if (c.user === c.password || c.password === undefined) {
           pass[c.status] = activated
           const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId)
-          return this.db.exec(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
+          return this.db.execute(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
         } else {
           const stmt1 = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId)
           const query = `update ${c.user} set ${c.status} = ${this.db.param(1)} where ${this.id} = ${this.db.param(2)}`
           const params: any[] = [activated, userId]
           const stmt2: Statement = { query, params }
-          return this.db.execBatch([stmt1, stmt2], true).then((v) => (v > 0 ? true : false))
+          return this.db.executeBatch([stmt1, stmt2], true).then((v) => (v > 0 ? true : false))
         }
       } else {
         const stmt = buildUpdatePassword(pass, this.db.param, this.password, this.id, userId)
-        return this.db.exec(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
+        return this.db.execute(stmt.query, stmt.params).then((v) => (v > 0 ? true : false))
       }
     }
   }
@@ -784,7 +803,7 @@ export class SqlUserRepository<ID> implements UserRepository<ID> {
       }
     }
     params.push(userId)
-    return this.db.exec(query, params).then((v) => (v > 0 ? true : false))
+    return this.db.execute(query, params).then((v) => (v > 0 ? true : false))
   }
 }
 export function buildUpdatePassword<ID, T>(pass: T, buildParam: (i: number) => string, table: string, idName: string, id: ID): Statement {
