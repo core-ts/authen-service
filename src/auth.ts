@@ -188,7 +188,7 @@ export interface Repo {
   maxPasswordAge?: number
 }
 export interface BaseAuthConfig<T extends Repo> extends BaseConfig {
-  token: Token
+  // token: Token
   // payload: StringMap
   account?: StringMap
   userStatus?: UserStatus
