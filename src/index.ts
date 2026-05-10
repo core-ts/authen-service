@@ -870,3 +870,17 @@ export class MailSender {
   }
 }
 export const CodeMailSender = MailSender
+
+export function getFirstPath(items: Privilege[]): string | undefined {
+  for (let i = 0; i < items.length; i++) {
+    const children = items[i].children
+    if (children && children.length > 0) {
+      return getFirstPath(children)
+    } else {
+      if (items[i].path) {
+        return items[i].path
+      }
+    }
+  }
+  return undefined
+}
