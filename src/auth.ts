@@ -103,6 +103,7 @@ export interface Result {
   status: number | string
   user?: Account
   message?: string
+  token?: string
 }
 export type AuthResult = Result
 export interface Account {
@@ -112,11 +113,11 @@ export interface Account {
   email?: string
   phone?: string
   displayName?: string
-  // passwordExpiredTime?: Date
+  passwordExpiredTime?: Date
   // token?: string;
   // tokenExpiredTime?: Date;
-  newUser?: boolean
-  userType?: string
+  // newUser?: boolean
+  // userType?: string
   roles?: string[]
   privileges?: Privilege[]
   language?: string
