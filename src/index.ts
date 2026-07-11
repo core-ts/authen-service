@@ -701,8 +701,6 @@ export function useUserRepository<ID, C extends SqlAuthConfig>(db: DB, c: C, m?:
   return new SqlUserRepository(db, c.db, c.query, c.userStatus, n)
 }
 export const createUserRepository = useUserRepository
-export const createUserService = useUserRepository
-export const useUserService = useUserRepository
 // tslint:disable-next-line:max-classes-per-file
 export class SqlUserRepository<ID> implements UserRepository<ID> {
   constructor(
