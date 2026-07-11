@@ -1,4 +1,5 @@
-import * as util from "util"
+import { randomInt } from "crypto"
+import { format } from "util"
 import {
   Account,
   CustomToken,
@@ -79,20 +80,20 @@ export function swap(m?: StringMap): StringMap | undefined {
 }
 export class Authenticator<T extends User, ID> {
   constructor(
-    public status: Status,
-    public compare: ((v1: string, v2: string) => Promise<boolean>) | undefined,
+    protected status: Status,
+    protected compare: ((v1: string, v2: string) => Promise<boolean>) | undefined,
     account?: StringMap,
-    public repository?: UserRepository<ID>,
-    public getPrivileges?: (userId: ID) => Promise<Privilege[]>,
-    public lockedMinutes?: number,
-    public maxPasswordFailed?: number,
-    public send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
-    public expires?: number,
-    public codeRepository?: CodeRepository<ID>,
-    public hash?: (plaintext: string) => Promise<string>,
-    public hasTwoFactors?: (userId: ID) => Promise<boolean>,
+    protected repository?: UserRepository<ID>,
+    protected getPrivileges?: (userId: ID) => Promise<Privilege[]>,
+    protected lockedMinutes?: number,
+    protected maxPasswordFailed?: number,
+    protected send?: (to: string, passcode: string, expireAt: Date, params?: any) => Promise<boolean>,
+    protected expires?: number,
+    protected codeRepository?: CodeRepository<ID>,
+    protected hash?: (plaintext: string) => Promise<string>,
+    protected hasTwoFactors?: (userId: ID) => Promise<boolean>,
     gen?: () => string,
-    public check?: (user: T) => Promise<Result>,
+    protected check?: (user: T) => Promise<Result>,
   ) {
     this.generate = gen ? gen : generate
     this.account = swap(account)
@@ -427,7 +428,11 @@ export function equalDate(d1?: Date, d2?: Date): boolean {
 }
 // tslint:disable-next-line:max-classes-per-file
 export class PrivilegesLoader {
-  constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string, public count?: number) {
+  constructor(
+    protected query: <T>(sql: string, args?: any[]) => Promise<T[]>,
+    protected sql: string,
+    protected count?: number,
+  ) {
     this.privileges = this.privileges.bind(this)
   }
   privileges(userId: string): Promise<Privilege[]> {
@@ -451,7 +456,10 @@ export const PrivilegeService = PrivilegesLoader
 export const PrivilegeRepository = PrivilegesLoader
 // tslint:disable-next-line:max-classes-per-file
 export class PrivilegesReader {
-  constructor(public query: <T>(sql: string, args?: any[]) => Promise<T[]>, public sql: string) {
+  constructor(
+    protected query: <T>(sql: string, args?: any[]) => Promise<T[]>,
+    protected sql: string,
+  ) {
     this.privileges = this.privileges.bind(this)
   }
   privileges(): Promise<Privilege[]> {
@@ -697,7 +705,13 @@ export const createUserService = useUserRepository
 export const useUserService = useUserRepository
 // tslint:disable-next-line:max-classes-per-file
 export class SqlUserRepository<ID> implements UserRepository<ID> {
-  constructor(public db: DB, public conf: DBConfig, public query: string, public status?: UserStatus, mp?: StringMap) {
+  constructor(
+    protected db: DB,
+    protected conf: DBConfig,
+    protected query: string,
+    protected status?: UserStatus,
+    mp?: StringMap,
+  ) {
     this.map = mp
     this.id = !this.conf.id || this.conf.id.length === 0 ? "id" : this.conf.id
     this.password = conf.password ? conf.password : conf.user
@@ -820,12 +834,9 @@ export function buildUpdate<T>(obj: T, buildParam: (i: number) => string): State
   const query = cols.join(",")
   return { query, params }
 }
-export const SqlUserService = SqlUserRepository
-export function generate(length?: number): string {
-  if (!length) {
-    length = 6
-  }
-  return padLeft(Math.floor(Math.random() * Math.floor(Math.pow(10, length) - 1)).toString(), length, "0")
+export function generate(): string {
+  const n = randomInt(1, 999999)
+  return padLeft(n.toString(), 6, "0")
 }
 export function padLeft(str: string, length: number, pad: string) {
   if (str.length >= length) {
@@ -854,12 +865,17 @@ export interface MailData {
 }
 // tslint:disable-next-line:max-classes-per-file
 export class MailSender {
-  constructor(public sendMail: (mailData: MailData) => Promise<boolean>, public from: EmailData, public body: string, public subject: string) {
+  constructor(
+    protected sendMail: (mailData: MailData) => Promise<boolean>,
+    protected from: EmailData,
+    protected body: string,
+    protected subject: string,
+  ) {
     this.send = this.send.bind(this)
   }
   send(to: string, passcode: string, expireAt: Date): Promise<boolean> {
     const diff = Math.abs(Math.round((Date.now() - expireAt.getTime()) / 1000 / 60))
-    const body = util.format(this.body, ...[passcode, diff])
+    const body = format(this.body, ...[passcode, diff])
     const msg = {
       to,
       from: this.from,
